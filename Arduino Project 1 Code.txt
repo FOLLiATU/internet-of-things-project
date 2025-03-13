@@ -1,0 +1,66 @@
+#include <Wire.h>
+#include <RTClib.h>
+#include <LiquidCrystal_I2C.h>
+
+#define LED_PIN 9
+#define LDR_PIN A0
+#define BUTTON_PIN 7
+
+RTC_DS3231 rtc;
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+int wakeHour = 7;
+int wakeMinute = 0;
+int lightThreshold = 300;  // Adjust this value based on your LDR
+
+void setup() {
+    // Initialize Serial, LCD, RTC
+    Serial.begin(9600);
+    lcd.init();
+    lcd.backlight();
+    if (!rtc.begin()) {
+        lcd.print("RTC Error!");
+        while (1);
+    }
+    lcd.print("Sunrise Alarm");
+}
+
+void loop() {
+    DateTime now = rtc.now();
+    int lightValue = analogRead(LDR_PIN);
+
+    // Display time on the LCD
+    lcd.setCursor(0, 0);
+    lcd.print(now.hour());
+    lcd.print(":");
+    if (now.minute() < 10) {
+        lcd.print("0");
+    }
+    lcd.print(now.minute());
+
+    // Display light level
+    lcd.setCursor(0, 1);
+    lcd.print("Light: ");
+    lcd.print(lightValue);
+
+    // If it's the wake-up time and it's dark, trigger sunrise effect
+    if (now.hour() == wakeHour && now.minute() == wakeMinute && lightValue < lightThreshold) {
+        sunriseEffect();
+    }
+
+    // If the button is pressed, turn off the alarm
+    if (digitalRead(BUTTON_PIN) == LOW) {
+        analogWrite(LED_PIN, 0);
+        lcd.setCursor(0, 1);
+        lcd.print("Alarm OFF ");
+    }
+
+    delay(1000);  // Delay for 1 second
+}
+
+void sunriseEffect() {
+    for (int brightness = 0; brightness <= 255; brightness++) {
+        analogWrite(LED_PIN, brightness);
+        delay(20);  // Adjust speed of sunrise
+    }
+}
