@@ -1,66 +1,139 @@
 #include <Wire.h>
-#include <RTClib.h>
-#include <LiquidCrystal_I2C.h>
+#include <TimeLib.h>
+#include <Bridge.h>
+#include <Process.h>
+#include <rgb_lcd.h>
 
-#define LED_PIN 9
-#define LDR_PIN A0
-#define BUTTON_PIN 7
+// Components setup
+const int ledPin = 6;
+const int buttonPin = 2;
+const int buzzerPin = 3;
+const int sunriseDuration = 300;
 
-RTC_DS3231 rtc;
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+int alarmHour = 7;
+int alarmMinute = 0;
+bool alarmActive = false;
+unsigned long sunriseStartTime = 0;
 
-int wakeHour = 7;
-int wakeMinute = 0;
-int lightThreshold = 300;  // Adjust this value based on your LDR
+rgb_lcd lcd;
 
 void setup() {
-    // Initialize Serial, LCD, RTC
-    Serial.begin(9600);
-    lcd.init();
-    lcd.backlight();
-    if (!rtc.begin()) {
-        lcd.print("RTC Error!");
-        while (1);
-    }
-    lcd.print("Sunrise Alarm");
+  pinMode(ledPin, OUTPUT);
+  pinMode(buttonPin, INPUT);
+  pinMode(buzzerPin, OUTPUT);
+
+  lcd.begin(16, 2);
+  lcd.setRGB(0, 128, 255);
+  lcd.print("Sunrise Alarm");
+
+  Serial.begin(9600);
+  Bridge.begin();
+  setTimeFromNTP();
 }
 
 void loop() {
-    DateTime now = rtc.now();
-    int lightValue = analogRead(LDR_PIN);
+  static unsigned long lastSync = 0;
+  if (millis() - lastSync > 3600000) { 
+    setTimeFromNTP();
+    lastSync = millis();
+  }
 
-    // Display time on the LCD
-    lcd.setCursor(0, 0);
-    lcd.print(now.hour());
-    lcd.print(":");
-    if (now.minute() < 10) {
-        lcd.print("0");
+  int currentHour = hour();
+  int currentMinute = minute();
+  int currentSecond = second();
+
+  if (!alarmActive && currentHour == alarmHour && currentMinute == alarmMinute) {
+    alarmActive = true;
+    sunriseStartTime = millis();
+    lcd.clear();
+    lcd.print("Sunrise starting");
+  }
+
+  if (alarmActive) {
+    sunriseEffect();
+    if (digitalRead(buttonPin) == HIGH) {
+      stopAlarm();
     }
-    lcd.print(now.minute());
+  } else {
+    // Show countdown on LCD
+    showCountdown(currentHour, currentMinute, currentSecond);
+  }
 
-    // Display light level
-    lcd.setCursor(0, 1);
-    lcd.print("Light: ");
-    lcd.print(lightValue);
-
-    // If it's the wake-up time and it's dark, trigger sunrise effect
-    if (now.hour() == wakeHour && now.minute() == wakeMinute && lightValue < lightThreshold) {
-        sunriseEffect();
-    }
-
-    // If the button is pressed, turn off the alarm
-    if (digitalRead(BUTTON_PIN) == LOW) {
-        analogWrite(LED_PIN, 0);
-        lcd.setCursor(0, 1);
-        lcd.print("Alarm OFF ");
-    }
-
-    delay(1000);  // Delay for 1 second
+  delay(1000);
 }
 
 void sunriseEffect() {
-    for (int brightness = 0; brightness <= 255; brightness++) {
-        analogWrite(LED_PIN, brightness);
-        delay(20);  // Adjust speed of sunrise
-    }
+  unsigned long elapsed = (millis() - sunriseStartTime) / 1000; // in seconds
+  if (elapsed < sunriseDuration) {
+    int brightness = map(elapsed, 0, sunriseDuration, 0, 255);
+    analogWrite(ledPin, brightness);
+    lcd.setCursor(0, 1);
+    lcd.print("Rising...       ");
+  } else {
+    analogWrite(ledPin, 255);
+    tone(buzzerPin, 1000);
+    lcd.setCursor(0, 1);
+    lcd.print("Wake up! Press!");
+  }
+}
+
+void stopAlarm() {
+  analogWrite(ledPin, 0);
+  noTone(buzzerPin);
+  alarmActive = false;
+  lcd.clear();
+  lcd.print("Alarm Stopped");
+  delay(2000);
+  lcd.clear();
+}
+
+void showCountdown(int h, int m, int s) {
+  long alarmInSeconds = alarmHour * 3600L + alarmMinute * 60L;
+  long nowInSeconds = h * 3600L + m * 60L + s;
+  long remaining = alarmInSeconds - nowInSeconds;
+
+  if (remaining < 0) {
+    remaining += 86400; // If next day
+  }
+
+  int remMin = (remaining % 3600) / 60;
+  int remSec = remaining % 60;
+
+  lcd.setCursor(0, 0);
+  lcd.print("Alarm: ");
+  if (alarmHour < 10) lcd.print("0");
+  lcd.print(alarmHour);
+  lcd.print(":");
+  if (alarmMinute < 10) lcd.print("0");
+  lcd.print(alarmMinute);
+
+  lcd.setCursor(0, 1);
+  lcd.print("In ");
+  if (remMin < 10) lcd.print("0");
+  lcd.print(remMin);
+  lcd.print("m ");
+  if (remSec < 10) lcd.print("0");
+  lcd.print(remSec);
+  lcd.print("s   ");
+}
+
+void setTimeFromNTP() {
+  Process time;
+  time.begin("date");
+  time.addParameter("+%H %M %S");
+  time.run();
+
+  String hourStr = time.readStringUntil(' ');
+  String minStr = time.readStringUntil(' ');
+  String secStr = time.readString();
+
+  int h = hourStr.toInt();
+  int m = minStr.toInt();
+  int s = secStr.toInt();
+
+  setTime(h, m, s, day(), month(), year());
+  Serial.print("Time synced: ");
+  Serial.print(h); Serial.print(":");
+  Serial.print(m); Serial.print(":");
+  Serial.println(s);
 }
